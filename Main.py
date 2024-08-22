@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 TOKEN = '6935623650:AAGbPzsciRx6tyFf489t-vnqLLyo7XnSpmI'
 bot = telebot.TeleBot(TOKEN)
 
-# تابع برای ارسال پیام وضعیت و به روزرسانی آن
+# تابع برای ارسال پیام وضعیت و به‌روزرسانی آن
 def update_status_message(message, progress_message, current_progress, total_progress):
     try:
         progress_percent = (current_progress / total_progress) * 100
@@ -64,19 +64,22 @@ def process_youtube_link(link, message):
         markup = telebot.types.InlineKeyboardMarkup()
         markup.row_width = 2
         markup.add(
-            telebot.types.InlineKeyboardButton("صدا فقط (بالا‌ترین کیفیت)", callback_data='audio'),
-            telebot.types.InlineKeyboardButton("144p", callback_data='144'),
-            telebot.types.InlineKeyboardButton("360p", callback_data='360'),
-            telebot.types.InlineKeyboardButton("720p", callback_data='720'),
-            telebot.types.InlineKeyboardButton("1080p", callback_data='1080')
+            telebot.types.InlineKeyboardButton("صدا فقط (بالا‌ترین کیفیت)", callback_data=f'youtube_audio_{info_dict["id"]}'),
+            telebot.types.InlineKeyboardButton("144p", callback_data=f'youtube_144_{info_dict["id"]}'),
+            telebot.types.InlineKeyboardButton("360p", callback_data=f'youtube_360_{info_dict["id"]}'),
+            telebot.types.InlineKeyboardButton("720p", callback_data=f'youtube_720_{info_dict["id"]}'),
+            telebot.types.InlineKeyboardButton("1080p", callback_data=f'youtube_1080_{info_dict["id"]}')
         )
         
         bot.send_message(message.chat.id, f"🎬 *عنوان:* {title}\n⏱ *مدت زمان:* {duration // 60} دقیقه {duration % 60} ثانیه\n\n*لطفاً کیفیت دلخواه خود را انتخاب کنید:*", reply_markup=markup, parse_mode='Markdown')
-        bot.register_callback_query_handler(callback=lambda call: youtube_download(call, info_dict))
 
 # تابع برای دانلود ویدئو از یوتیوب و به‌روزرسانی وضعیت دانلود
-def youtube_download(call, info_dict):
-    format_id = call.data
+@bot.callback_query_handler(func=lambda call: call.data.startswith('youtube'))
+def youtube_download(call):
+    format_id = call.data.split('_')[1]
+    info_dict_id = call.data.split('_')[2]
+
+    # بازسازی اطلاعات ویدئو با استفاده از id
     ydl_opts = {
         'format': format_id if format_id != 'audio' else 'bestaudio/best',
         'outtmpl': '%(title)s.%(ext)s'
@@ -90,8 +93,9 @@ def youtube_download(call, info_dict):
             update_status_message(call.message, progress_message, d['downloaded_bytes'], d['total_bytes'])
 
     ydl_opts['progress_hooks'] = [progress_hook]
-    
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(info_dict_id, download=False)
         ydl.download([info_dict['webpage_url']])
         file_name = ydl.prepare_filename(info_dict)
         
