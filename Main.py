@@ -3,199 +3,126 @@ import os
 import yt_dlp
 import instaloader
 import spotipy
-import soundcloud
-import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler, CallbackQueryHandler
+import telebot
 
-# تنظیمات اولیه برای ورود به API تلگرام
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# تنظیمات اولیه برای لاگ‌ها
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# مراحل گفتگو
-CHOOSE_PLATFORM, GET_LINK, CHOOSE_QUALITY = range(3)
-
-# توکن ربات تلگرام و آیدی ادمین
+# توکن ربات تلگرام
 TOKEN = '6935623650:AAGbPzsciRx6tyFf489t-vnqLLyo7XnSpmI'
-ADMIN_ID = 123456789  # جایگزین با آیدی ادمین
+bot = telebot.TeleBot(TOKEN)
 
-# هندلر برای شروع ربات
-async def start(update: Update, context: CallbackContext):
-    await update.message.reply_text(
-        "سلام! لطفاً یکی از پلتفرم‌ها را برای دانلود انتخاب کنید:\n\n"
-        "1️⃣ یوتیوب\n"
-        "2️⃣ اینستاگرام\n"
-        "3️⃣ ساندکلاود\n"
-        "4️⃣ اسپاتیفای",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("یوتیوب", callback_data='youtube')],
-            [InlineKeyboardButton("اینستاگرام", callback_data='instagram')],
-            [InlineKeyboardButton("ساندکلاود", callback_data='soundcloud')],
-            [InlineKeyboardButton("اسپاتیفای", callback_data='spotify')]
-        ])
-    )
-    return CHOOSE_PLATFORM
-
-# هندلر برای دریافت پلتفرم انتخاب شده
-async def choose_platform(update: Update, context: CallbackContext):
-    query = update.callback_query
-    platform = query.data
-    context.user_data['platform'] = platform
-    await query.message.edit_text(
-        "لطفاً لینک مربوط به این پلتفرم را ارسال کنید."
-    )
-    return GET_LINK
-
-# هندلر برای دریافت لینک و دانلود
-async def get_link(update: Update, context: CallbackContext):
-    link = update.message.text
-    platform = context.user_data.get('platform')
-
+# تابع برای ارسال پیام وضعیت و به روزرسانی آن
+def update_status_message(message, progress_message, current_progress, total_progress):
     try:
-        if platform == 'youtube':
-            await handle_youtube(link, update)
-        elif platform == 'instagram':
-            await download_instagram(link, update)
-        elif platform == 'soundcloud':
-            await download_soundcloud(link, update)
-        elif platform == 'spotify':
-            await download_spotify(link, update)
+        progress_percent = (current_progress / total_progress) * 100
+        text = f"📥 *در حال دانلود، لطفا صبر کنید...*\n\n⏳ پیشرفت: {progress_percent:.2f}%"
+        bot.edit_message_text(chat_id=message.chat.id, message_id=progress_message.message_id, text=text, parse_mode='Markdown')
     except Exception as e:
-        await update.message.reply_text(f"⚠️ خطا در دانلود: {e}")
+        logger.error(f"خطا در آپدیت پیام وضعیت: {e}")
 
-    return ConversationHandler.END
+# هندلر برای شروع ربات و انتخاب پلتفرم
+@bot.message_handler(commands=['start'])
+def start(message):
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.row_width = 2
+    markup.add(
+        telebot.types.InlineKeyboardButton("یوتیوب", callback_data="youtube"),
+        telebot.types.InlineKeyboardButton("اینستاگرام", callback_data="instagram"),
+        telebot.types.InlineKeyboardButton("ساندکلاود", callback_data="soundcloud"),
+        telebot.types.InlineKeyboardButton("اسپاتیفای", callback_data="spotify")
+    )
+    bot.send_message(message.chat.id, "🎉 *خوش آمدید!*\nلطفاً یکی از پلتفرم‌ها را انتخاب کنید:", reply_markup=markup, parse_mode='Markdown')
 
-# تابع دانلود ویدیو از یوتیوب
-async def handle_youtube(link, update):
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': '%(title)s.%(ext)s',
-        'noplaylist': True
-    }
+# هندلر برای انتخاب پلتفرم
+@bot.callback_query_handler(func=lambda call: True)
+def choose_platform(call):
+    platform = call.data
+    bot.send_message(call.message.chat.id, "🔗 *لینک مربوط به این پلتفرم را ارسال کنید.*", parse_mode='Markdown')
+    bot.register_next_step_handler(call.message, get_link, platform)
+
+# هندلر برای دریافت لینک و پردازش آن
+def get_link(message, platform):
+    link = message.text
+    if platform == 'youtube':
+        process_youtube_link(link, message)
+    elif platform == 'instagram':
+        download_instagram(link, message)
+    elif platform == 'spotify':
+        download_spotify(link, message)
+    # در صورت وجود ساندکلاود می‌توانید این بخش را اضافه کنید.
+
+# تابع برای پردازش لینک یوتیوب و انتخاب کیفیت
+def process_youtube_link(link, message):
+    ydl_opts = {'format': 'best', 'noplaylist': True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(link, download=False)
-        title = info_dict.get('title', 'بدون عنوان')
-        duration = info_dict.get('duration', 'ناشناخته')
-        formats = info_dict.get('formats', [])
+        title = info_dict.get('title', 'ویدئو')
+        duration = info_dict.get('duration', 0)
         
-        keyboard = []
-        for fmt in formats:
-            quality = fmt.get('format_note', 'کیفیت نامشخص')
-            file_size = fmt.get('filesize', 0)
-            button_text = f"{quality} ({file_size // (1024 * 1024)} MB)"
-            callback_data = f"{fmt['format_id']}|{link}"
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
-        
-        if not keyboard:
-            await update.message.reply_text("⚠️ هیچ کیفیتی برای دانلود پیدا نشد.")
-            return
-        
-        keyboard.append([InlineKeyboardButton("لغو", callback_data='cancel')])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            f"📹 عنوان: {title}\n⏳ مدت زمان: {duration} ثانیه\n\n"
-            "لطفاً کیفیت مورد نظر را انتخاب کنید:",
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN
+        markup = telebot.types.InlineKeyboardMarkup()
+        markup.row_width = 2
+        markup.add(
+            telebot.types.InlineKeyboardButton("صدا فقط (بالا‌ترین کیفیت)", callback_data='audio'),
+            telebot.types.InlineKeyboardButton("144p", callback_data='144'),
+            telebot.types.InlineKeyboardButton("360p", callback_data='360'),
+            telebot.types.InlineKeyboardButton("720p", callback_data='720'),
+            telebot.types.InlineKeyboardButton("1080p", callback_data='1080')
         )
-        return CHOOSE_QUALITY
+        
+        bot.send_message(message.chat.id, f"🎬 *عنوان:* {title}\n⏱ *مدت زمان:* {duration // 60} دقیقه {duration % 60} ثانیه\n\n*لطفاً کیفیت دلخواه خود را انتخاب کنید:*", reply_markup=markup, parse_mode='Markdown')
+        bot.register_callback_query_handler(callback=lambda call: youtube_download(call, info_dict))
 
-# هندلر برای انتخاب کیفیت یوتیوب
-async def choose_quality(update: Update, context: CallbackContext):
-    query = update.callback_query
-    data = query.data.split('|')
-    format_id, link = data
+# تابع برای دانلود ویدئو از یوتیوب و به‌روزرسانی وضعیت دانلود
+def youtube_download(call, info_dict):
+    format_id = call.data
     ydl_opts = {
-        'format': format_id,
+        'format': format_id if format_id != 'audio' else 'bestaudio/best',
         'outtmpl': '%(title)s.%(ext)s'
     }
+
+    # پیام در حال دانلود
+    progress_message = bot.send_message(call.message.chat.id, "📥 *در حال دانلود، لطفا صبر کنید...*", parse_mode='Markdown')
+
+    def progress_hook(d):
+        if d['status'] == 'downloading':
+            update_status_message(call.message, progress_message, d['downloaded_bytes'], d['total_bytes'])
+
+    ydl_opts['progress_hooks'] = [progress_hook]
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info_dict = ydl.extract_info(link, download=True)
+        ydl.download([info_dict['webpage_url']])
         file_name = ydl.prepare_filename(info_dict)
-        await query.message.reply_document(document=open(file_name, 'rb'))
+        
+        # ارسال فایل دانلود شده به کاربر
+        with open(file_name, 'rb') as f:
+            bot.send_document(call.message.chat.id, f)
+        
+        # حذف فایل پس از ارسال
         os.remove(file_name)
-    return ConversationHandler.END
 
 # تابع دانلود از اینستاگرام
-async def download_instagram(link, update):
+def download_instagram(link, message):
     loader = instaloader.Instaloader()
     post = instaloader.Post.from_shortcode(loader.context, link.split("/")[-2])
     loader.download_post(post, target='.')
+    
     file_name = f"{post.shortcode}.mp4" if post.is_video else f"{post.shortcode}.jpg"
-    await update.message.reply_document(document=open(file_name, 'rb'))
+    progress_message = bot.send_message(message.chat.id, "📥 *در حال دانلود، لطفا صبر کنید...*", parse_mode='Markdown')
+
+    # ارسال فایل دانلود شده به کاربر
+    with open(file_name, 'rb') as f:
+        bot.send_document(message.chat.id, f)
+    
     os.remove(file_name)
 
-# تابع دانلود از ساندکلاود
-async def download_soundcloud(link, update):
-    client = soundcloud.Client(client_id='YOUR_SOUNDCLOUD_CLIENT_ID')
-    track = client.get('/resolve', url=link)
-    stream_url = client.get(track.stream_url, allow_redirects=False)
-    response = requests.get(stream_url.location, stream=True)
-    with open(f"{track.title}.mp3", 'wb') as f:
-        f.write(response.content)
-    await update.message.reply_document(document=open(f"{track.title}.mp3", 'rb'))
-    os.remove(f"{track.title}.mp3")
-
 # تابع دانلود از اسپاتیفای
-async def download_spotify(link, update):
+def download_spotify(link, message):
     sp = spotipy.Spotify(auth='YOUR_SPOTIFY_TOKEN')
     track = sp.track(link)
-    await update.message.reply_text(f"🔗 لینک اسپاتیفای: {track['external_urls']['spotify']}")
+    bot.send_message(message.chat.id, f"لینک اسپاتیفای: {track['external_urls']['spotify']}")
 
-# تابع برای ارسال پیام‌های پشتیبانی به ادمین
-async def support(update: Update, context: CallbackContext):
-    if update.message.from_user.id == ADMIN_ID:
-        if update.message.reply_to_message:
-            user_message = update.message.reply_to_message.text
-            response_message = update.message.text
-            user_id = update.message.reply_to_message.from_user.id
-            await context.bot.send_message(user_id, f"👨‍💼 پاسخ ادمین:\n\n{response_message}")
-            await update.message.reply_text("✅ پاسخ شما ارسال شد.")
-        else:
-            await update.message.reply_text("❌ لطفاً به پیامی که می‌خواهید پاسخ دهید، پاسخ دهید.")
-    else:
-        await update.message.reply_text("❌ شما مجاز به ارسال پاسخ نیستید.")
-
-# تابع برای پشتیبانی از سیستم
-async def support_start(update: Update, context: CallbackContext):
-    await update.message.reply_text(
-        "برای پشتیبانی، لطفاً سوال یا مشکلتان را ارسال کنید و ادمین به شما پاسخ خواهد داد. "
-        "سوالات شما به ادمین ارسال می‌شود."
-    )
-
-async def handle_support_message(update: Update, context: CallbackContext):
-    if update.message.from_user.id != ADMIN_ID:
-        await context.bot.send_message(ADMIN_ID, f"📬 پیام جدید از {update.message.from_user.full_name}:\n\n{update.message.text}")
-        await update.message.reply_text("✅ پیام شما به ادمین ارسال شد. در اسرع وقت پاسخ خواهیم داد.")
-    else:
-        await support(update, context)
-
-# هندلر برای لغو گفتگو
-async def cancel(update: Update, context: CallbackContext):
-    await update.message.reply_text('❌ دانلود لغو شد.')
-    return ConversationHandler.END
-
-# تابع اصلی اجرای ربات
-def main():
-    application = ApplicationBuilder().token(TOKEN).build()
-
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start), CommandHandler('support', support_start)],
-        states={
-            CHOOSE_PLATFORM: [CallbackQueryHandler(choose_platform)],
-            GET_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_link)],
-            CHOOSE_QUALITY: [CallbackQueryHandler(choose_quality)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-
-    application.add_handler(conv_handler)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_support_message))
-    application.run_polling()
-
+# اجرای ربات
 if __name__ == '__main__':
-    main()
+    bot.polling(none_stop=True)
