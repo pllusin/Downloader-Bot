@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 CHOOSE_PLATFORM, GET_LINK, CHOOSE_QUALITY = range(3)
 
 # توکن ربات تلگرام
-TOKEN = 'YOUR_BOT_TOKEN_HERE'
-ADMIN_CHAT_ID = 'YOUR_ADMIN_CHAT_ID'
+TOKEN = '6935623650:AAGbPzsciRx6tyFf489t-vnqLLyo7XnSpmI'
+ADMIN_CHAT_ID = '1200237209'
 
 # هندلر برای شروع ربات
 async def start(update: Update, context: CallbackContext):
@@ -59,8 +59,7 @@ async def get_link(update: Update, context: CallbackContext):
 
     return ConversationHandler.END
 
-# تابع پردازش لینک یوتیوب و انتخاب کیفیت
-async def process_youtube_link(link, update, context):
+async def process_youtube_link(link: str, update: Update, context: CallbackContext):
     ydl_opts = {
         'format': 'best',
         'noplaylist': True
@@ -72,17 +71,29 @@ async def process_youtube_link(link, update, context):
         formats = info_dict.get('formats', [])
         
         # ساخت دکمه‌های شیشه‌ای برای انتخاب کیفیت
-        keyboard = []
-        for f in formats:
+        keyboard = [
+            [InlineKeyboardButton("صدا فقط (بالا‌ترین کیفیت)", callback_data='audio')],
+            [InlineKeyboardButton("144p", callback_data='144')],
+            [InlineKeyboardButton("360p", callback_data='360')],
+            [InlineKeyboardButton("720p", callback_data='720')],
+            [InlineKeyboardButton("1080p", callback_data='1080')]
+        ]
+        
+        # فیلتر کردن کیفیت‌ها
+        available_formats = [f for f in formats if f['format_id'] in {'audio', '144', '360', '720', '1080'}]
+        
+        for f in available_formats:
             format_id = f['format_id']
+            if format_id in ['audio']:
+                continue  # گزینه صوتی فقط برای دانلود است
             resolution = f.get('resolution', 'نامشخص')
             filesize = f.get('filesize', 0)
             filesize_mb = round(filesize / (1024 * 1024), 2) if filesize else 'نامشخص'
             button_text = f"{resolution} - {filesize_mb} MB"
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=f'quality_{format_id}')])
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=format_id)])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
-
+        
         details_text = f"""
         🎬 *عنوان:* {title}
         ⏱ *مدت زمان:* {duration // 60} دقیقه {duration % 60} ثانیه
@@ -95,13 +106,20 @@ async def process_youtube_link(link, update, context):
 # تابع برای دانلود ویدئوی یوتیوب با کیفیت انتخاب شده
 async def youtube_download(update: Update, context: CallbackContext):
     query = update.callback_query
-    format_id = query.data.split('_')[1]  # استخراج format_id
+    format_id = query.data
     info_dict = context.user_data['info_dict']
     
-    ydl_opts = {
-        'format': format_id,
-        'outtmpl': '%(title)s.%(ext)s',
-    }
+    if format_id == 'audio':
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': '%(title)s.%(ext)s',
+        }
+    else:
+        ydl_opts = {
+            'format': format_id,
+            'outtmpl': '%(title)s.%(ext)s',
+        }
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([info_dict['webpage_url']])
         file_name = ydl.prepare_filename(info_dict)
